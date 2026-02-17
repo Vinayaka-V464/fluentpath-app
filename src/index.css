@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #8B5CF6;
+  --color-primary-dark: #7C3AED;
+  --color-primary-light: #A78BFA;
+  --color-primary-bg: rgba(139, 92, 246, 0.125);
+  --color-teal: #14B8A6;
+  --color-teal-light: #5EEAD4;
+  --color-pink: #F472B6;
+  --color-gold: #F59E0B;
+  --color-orange: #FB923C;
+  --color-error: #EF4444;
+  --color-surface: #F4F4F5;
+  --color-elevated: #E4E4E7;
+  --color-text-primary: #18181B;
+  --color-text-secondary: #71717A;
+  --color-text-tertiary: #A1A1AA;
+  --color-text-muted: #D4D4D8;
+  --color-border: #D4D4D8;
+  --font-heading: 'Plus Jakarta Sans', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-text-primary);
+  background: #FFFFFF;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-text-muted);
+  border-radius: 3px;
+}
+
+.gradient-primary {
+  background: linear-gradient(135deg, #8B5CF6, #7C3AED);
+}
+.gradient-hero {
+  background: linear-gradient(135deg, #8B5CF6, #14B8A6);
+}
+.gradient-text {
+  background: linear-gradient(135deg, #8B5CF6, #14B8A6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
