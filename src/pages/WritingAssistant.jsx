@@ -78,11 +78,11 @@ export default function WritingAssistant() {
   const getScoreColor = (s) => s >= 80 ? '#14B8A6' : s >= 60 ? '#F59E0B' : '#EF4444';
 
   return (
-    <div className="min-h-screen bg-white pb-24 lg:pb-8">
-      <div className="px-5 pt-6 lg:px-6 xl:px-8 max-w-6xl mx-auto">
+    <div className="lg:p-6 xl:p-8 pb-6">
+      <div className="px-5 lg:px-0 max-w-6xl mx-auto">
         {/* Header */}
-        <div className="mb-6 lg:hidden">
-          <h1 className="text-2xl font-heading font-bold text-text-primary">Writing Assistant</h1>
+        <div className="pt-6 pb-4 lg:pt-0 lg:pb-6">
+          <h1 className="text-2xl lg:text-3xl font-heading font-bold text-text-primary">Writing Assistant</h1>
           <p className="text-sm text-text-secondary mt-1">Practice writing and get AI-powered feedback</p>
         </div>
 

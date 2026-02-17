@@ -1,186 +1,295 @@
-import { useState } from 'react';
-import { Mic, MicOff, Volume2, RotateCcw, ChevronLeft, ChevronRight, Award } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { Mic, MicOff, Volume2, RotateCcw, ChevronLeft, ChevronRight, Award, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PRONUNCIATION_WORDS } from '../config/gemini';
+import { speak, startListening, stopListening, comparePronunciation, isSpeakingSupported, isListeningSupported } from '../services/speech';
+import { awardXP, XP_AMOUNTS, logSession } from '../services/firestore';
+
+const WORDS = [
+  { word: 'Beautiful', phonetic: '/ˈbjuː.tɪ.fəl/', difficulty: 'Easy' },
+  { word: 'Comfortable', phonetic: '/ˈkʌm.fə.tə.bəl/', difficulty: 'Easy' },
+  { word: 'Vocabulary', phonetic: '/vəˈkæb.jə.ler.i/', difficulty: 'Medium' },
+  { word: 'Necessary', phonetic: '/ˈnes.ə.ser.i/', difficulty: 'Medium' },
+  { word: 'Pronunciation', phonetic: '/prəˌnʌn.siˈeɪ.ʃən/', difficulty: 'Medium' },
+  { word: 'Entrepreneur', phonetic: '/ˌɒn.trə.prəˈnɜːr/', difficulty: 'Hard' },
+  { word: 'Sophisticated', phonetic: '/səˈfɪs.tɪ.keɪ.tɪd/', difficulty: 'Hard' },
+  { word: 'Extraordinary', phonetic: '/ɪkˈstrɔː.dɪ.nər.i/', difficulty: 'Hard' },
+  { word: 'Particularly', phonetic: '/pəˈtɪk.jə.lə.li/', difficulty: 'Medium' },
+  { word: 'Enthusiastic', phonetic: '/ɪnˌθjuː.ziˈæs.tɪk/', difficulty: 'Hard' },
+  { word: 'Determination', phonetic: '/dɪˌtɜː.mɪˈneɪ.ʃən/', difficulty: 'Medium' },
+  { word: 'Congratulations', phonetic: '/kənˌɡrætʃ.əˈleɪ.ʃənz/', difficulty: 'Hard' },
+  { word: 'Independent', phonetic: '/ˌɪn.dɪˈpen.dənt/', difficulty: 'Medium' },
+  { word: 'Appreciate', phonetic: '/əˈpriː.ʃi.eɪt/', difficulty: 'Easy' },
+  { word: 'Experience', phonetic: '/ɪkˈspɪə.ri.əns/', difficulty: 'Easy' },
+  { word: 'Temperature', phonetic: '/ˈtem.prə.tʃər/', difficulty: 'Medium' },
+];
+
+const SENTENCES = [
+  { text: 'The weather is beautiful today.', difficulty: 'Easy' },
+  { text: 'Could you please repeat that?', difficulty: 'Easy' },
+  { text: 'I would like to make a reservation.', difficulty: 'Medium' },
+  { text: 'She has a remarkable sense of humor.', difficulty: 'Medium' },
+  { text: 'The documentary was incredibly fascinating.', difficulty: 'Hard' },
+  { text: 'I appreciate your extraordinary patience.', difficulty: 'Hard' },
+];
 
 export default function PronunciationCoach() {
-  const [currentWord, setCurrentWord] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
-  const [score, setScore] = useState(null);
+  const { user } = useAuth();
+  const [mode, setMode] = useState('words'); // words | sentences
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [recording, setRecording] = useState(false);
+  const [result, setResult] = useState(null);
+  const [transcript, setTranscript] = useState('');
   const [attempts, setAttempts] = useState(0);
+  const [totalScore, setTotalScore] = useState(0);
+  const [practiced, setPracticed] = useState(0);
+  const [sessionLogged, setSessionLogged] = useState(false);
 
-  const word = PRONUNCIATION_WORDS[currentWord];
+  const canSpeak = isSpeakingSupported();
+  const canListen = isListeningSupported();
+  const items = mode === 'words' ? WORDS : SENTENCES;
+  const current = items[currentIndex];
 
   const handleListen = () => {
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(word.word);
-      utterance.lang = 'en-US';
-      utterance.rate = 0.8;
-      window.speechSynthesis.speak(utterance);
-    }
+    if (!canSpeak) return;
+    const text = mode === 'words' ? current.word : current.text;
+    speak(text, { rate: 0.7 });
   };
 
-  const handleRecord = () => {
-    if (isRecording) {
-      setIsRecording(false);
-      // Simulate a score
-      const s = Math.floor(Math.random() * 30) + 70;
-      setScore(s);
+  const handleRecord = async () => {
+    if (!canListen) return;
+    if (recording) {
+      stopListening();
+      setRecording(false);
+      return;
+    }
+    setRecording(true);
+    setResult(null);
+    setTranscript('');
+    try {
+      const spoken = await startListening({ language: 'en-US' });
+      setRecording(false);
+      setTranscript(spoken);
+      const target = mode === 'words' ? current.word : current.text;
+      const score = comparePronunciation(spoken, target);
+      setResult(score);
       setAttempts(prev => prev + 1);
-    } else {
-      setIsRecording(true);
-      setScore(null);
+      setTotalScore(prev => prev + score.score);
+      setPracticed(prev => prev + 1);
+
+      // Award XP after 3 practices
+      if (!sessionLogged && practiced >= 2 && user) {
+        await awardXP(user.uid, XP_AMOUNTS.PRONUNCIATION);
+        await logSession(user.uid, 'pronunciation', 5);
+        setSessionLogged(true);
+      }
+    } catch {
+      setRecording(false);
     }
   };
 
-  const nextWord = () => {
-    if (currentWord < PRONUNCIATION_WORDS.length - 1) {
-      setCurrentWord(prev => prev + 1);
-      setScore(null);
-      setAttempts(0);
-    }
+  const handleNext = () => {
+    setCurrentIndex(prev => Math.min(prev + 1, items.length - 1));
+    setResult(null);
+    setTranscript('');
   };
 
-  const prevWord = () => {
-    if (currentWord > 0) {
-      setCurrentWord(prev => prev - 1);
-      setScore(null);
-      setAttempts(0);
-    }
+  const handlePrev = () => {
+    setCurrentIndex(prev => Math.max(prev - 1, 0));
+    setResult(null);
+    setTranscript('');
   };
 
-  const getScoreColor = (s) => s >= 90 ? '#14B8A6' : s >= 75 ? '#F59E0B' : '#EF4444';
-  const getScoreLabel = (s) => s >= 90 ? 'Excellent!' : s >= 75 ? 'Good effort!' : 'Keep trying!';
+  const handleShuffle = () => {
+    setCurrentIndex(Math.floor(Math.random() * items.length));
+    setResult(null);
+    setTranscript('');
+  };
+
+  const scoreColor = (score) => {
+    if (score >= 80) return '#14B8A6';
+    if (score >= 50) return '#F59E0B';
+    return '#EF4444';
+  };
+
+  const scoreLabel = (score) => {
+    if (score >= 90) return 'Excellent!';
+    if (score >= 70) return 'Great job!';
+    if (score >= 50) return 'Good try!';
+    return 'Keep practicing';
+  };
+
+  const diffColor = { Easy: '#14B8A6', Medium: '#F59E0B', Hard: '#EF4444' };
 
   return (
-    <div className="min-h-screen bg-white pb-24 lg:pb-8">
-      <div className="px-5 pt-6 lg:px-6 xl:px-8 max-w-5xl mx-auto">
+    <div className="lg:p-6 xl:p-8">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="mb-8 lg:hidden">
-          <h1 className="text-2xl font-heading font-bold text-text-primary">Pronunciation Coach</h1>
-          <p className="text-sm text-text-secondary mt-1">Listen, practice, and perfect your accent</p>
+        <div className="px-5 pt-6 pb-4 lg:px-0 lg:pt-0 lg:pb-6">
+          <h1 className="font-heading text-2xl lg:text-3xl font-bold">Pronunciation Coach</h1>
+          <p className="text-sm text-text-secondary mt-1">Practice your pronunciation with real-time feedback</p>
         </div>
 
-        {/* Progress bar */}
-        <div className="flex items-center gap-3 mb-8 lg:bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-border/30 lg:p-4">
-          <span className="text-xs font-semibold text-text-secondary">{currentWord + 1}/{PRONUNCIATION_WORDS.length}</span>
-          <div className="flex-1 h-2 bg-surface rounded-full overflow-hidden">
-            <motion.div
-              className="h-full rounded-full gradient-primary"
-              animate={{ width: `${((currentWord + 1) / PRONUNCIATION_WORDS.length) * 100}%` }}
-            />
-          </div>
-          <div className="flex items-center gap-1">
-            <Award size={14} className="text-gold" />
-            <span className="text-xs font-semibold text-gold">{attempts} tries</span>
+        {/* Mode Toggle */}
+        <div className="px-5 lg:px-0 mb-5">
+          <div className="flex gap-1 bg-surface lg:bg-surface/60 rounded-2xl p-1.5 max-w-xs">
+            <button onClick={() => { setMode('words'); setCurrentIndex(0); setResult(null); }}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${mode === 'words' ? 'bg-white shadow-sm text-text-primary' : 'text-text-tertiary'}`}>
+              Words
+            </button>
+            <button onClick={() => { setMode('sentences'); setCurrentIndex(0); setResult(null); }}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${mode === 'sentences' ? 'bg-white shadow-sm text-text-primary' : 'text-text-tertiary'}`}>
+              Sentences
+            </button>
           </div>
         </div>
 
-        <div className="lg:grid lg:grid-cols-[1fr_380px] lg:gap-8">
-          {/* Left Column - Word Card */}
-          <div>
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={currentWord}
-                initial={{ opacity: 0, x: 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -30 }}
-                className="bg-gradient-to-br from-primary/5 to-teal/5 rounded-3xl p-8 lg:p-10 text-center mb-8 lg:bg-white lg:shadow-sm lg:border lg:border-border/30 lg:from-primary/3 lg:to-teal/3"
-              >
-                <p className="text-4xl lg:text-6xl font-heading font-bold text-text-primary mb-2">{word.word}</p>
-                <p className="text-lg lg:text-xl text-primary font-mono">{word.phonetic}</p>
-                <p className="text-sm lg:text-base text-text-secondary mt-2">{word.tips}</p>
-
-                {/* Listen button */}
-                <button
-                  onClick={handleListen}
-                  className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-teal/10 rounded-full text-teal font-semibold text-sm hover:bg-teal/20 transition-colors"
-                >
-                  <Volume2 size={18} />
-                  Listen
-                </button>
-              </motion.div>
-            </AnimatePresence>
-
-            {/* Navigation */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={prevWord}
-                disabled={currentWord === 0}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-surface text-text-secondary font-semibold text-sm disabled:opacity-30"
-              >
-                <ChevronLeft size={18} /> Previous
-              </button>
-              {score !== null && (
-                <button
-                  onClick={() => { setScore(null); }}
-                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-surface text-text-secondary font-semibold text-sm"
-                >
-                  <RotateCcw size={16} /> Retry
-                </button>
-              )}
-              <button
-                onClick={nextWord}
-                disabled={currentWord === PRONUNCIATION_WORDS.length - 1}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl gradient-primary text-white font-semibold text-sm disabled:opacity-30"
-              >
-                Next <ChevronRight size={18} />
-              </button>
-            </div>
-          </div>
-
-          {/* Right Column - Recording Area */}
-          <div className="lg:bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-border/30 lg:p-6">
-            {/* Waveform Visualization (simulated) */}
-            <div className="h-20 flex items-center justify-center gap-[3px] mb-8 mt-8 lg:mt-0">
-              {Array.from({ length: 40 }).map((_, i) => (
-                <motion.div
-                  key={i}
-                  className={`w-1.5 rounded-full ${isRecording ? 'bg-primary' : 'bg-border'}`}
-                  animate={isRecording ? {
-                    height: [8, Math.random() * 60 + 10, 8],
-                  } : { height: 8 }}
-                  transition={isRecording ? {
-                    duration: 0.5,
-                    repeat: Infinity,
-                    delay: i * 0.03,
-                  } : {}}
-                  style={{ height: 8 }}
-                />
-              ))}
-            </div>
-
-            {/* Record Button */}
-            <div className="flex justify-center mb-4">
-              <button
-                onClick={handleRecord}
-                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
-                  isRecording ? 'bg-error animate-pulse shadow-lg shadow-error/30' : 'gradient-primary shadow-lg shadow-primary/30'
-                }`}
-              >
-                {isRecording ? <MicOff size={28} className="text-white" /> : <Mic size={28} className="text-white" />}
-              </button>
-            </div>
-            <p className="text-center text-sm text-text-secondary mb-6">
-              {isRecording ? 'Recording... Tap to stop' : 'Tap to start recording'}
-            </p>
-
-            {/* Score Display */}
-            {score !== null && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="text-center mb-4 lg:border-t lg:border-border/30 lg:pt-6"
-              >
-                <div className="inline-flex items-center justify-center w-24 h-24 rounded-full border-4" style={{ borderColor: getScoreColor(score) }}>
-                  <span className="text-3xl font-heading font-bold" style={{ color: getScoreColor(score) }}>{score}%</span>
+        <div className="lg:grid lg:grid-cols-5 lg:gap-6">
+          {/* Main Card - 3/5 */}
+          <div className="lg:col-span-3 px-5 lg:px-0">
+            <div className="lg:bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-border/30 lg:p-8">
+              {/* Counter + Shuffle */}
+              <div className="flex items-center justify-between mb-6">
+                <span className="text-xs font-bold text-text-tertiary">{currentIndex + 1} / {items.length}</span>
+                <div className="flex gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md" style={{ color: diffColor[current.difficulty], backgroundColor: `${diffColor[current.difficulty]}15` }}>
+                    {current.difficulty}
+                  </span>
+                  <button onClick={handleShuffle} className="w-8 h-8 rounded-lg bg-surface flex items-center justify-center text-text-tertiary hover:text-text-secondary">
+                    <RefreshCw size={14} />
+                  </button>
                 </div>
-                <p className="mt-2 font-semibold text-lg" style={{ color: getScoreColor(score) }}>{getScoreLabel(score)}</p>
-                <p className="text-sm text-text-secondary mt-1">
-                  {score >= 90 ? 'Your pronunciation is spot on!' : score >= 75 ? 'Almost there, try emphasizing the stressed syllable.' : 'Listen again carefully and try once more.'}
-                </p>
-              </motion.div>
-            )}
+              </div>
+
+              {/* Word/Sentence Display */}
+              <div className="text-center py-6">
+                <AnimatePresence mode="wait">
+                  <motion.div key={currentIndex} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+                    <p className="font-heading text-3xl lg:text-4xl font-bold text-text-primary mb-2">
+                      {mode === 'words' ? current.word : `"${current.text}"`}
+                    </p>
+                    {mode === 'words' && current.phonetic && (
+                      <p className="text-sm text-text-secondary font-mono">{current.phonetic}</p>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+
+              {/* Listen Button */}
+              {canSpeak && (
+                <div className="flex justify-center mb-6">
+                  <button onClick={handleListen}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary/10 text-primary font-semibold text-sm hover:bg-primary/20 transition-colors">
+                    <Volume2 size={16} /> Listen
+                  </button>
+                </div>
+              )}
+
+              {/* Record Button */}
+              <div className="flex justify-center mb-6">
+                {canListen ? (
+                  <button onClick={handleRecord}
+                    className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
+                      recording
+                        ? 'bg-error text-white shadow-lg shadow-error/30 animate-pulse'
+                        : 'gradient-hero text-white shadow-lg shadow-teal/20 hover:shadow-xl hover:scale-105'
+                    }`}>
+                    {recording ? <MicOff size={28} /> : <Mic size={28} />}
+                  </button>
+                ) : (
+                  <p className="text-sm text-text-tertiary italic">Speech recognition not supported in this browser</p>
+                )}
+              </div>
+              <p className="text-center text-xs text-text-tertiary mb-6">
+                {recording ? 'Listening... tap to stop' : 'Tap to start recording'}
+              </p>
+
+              {/* Result */}
+              {result && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                  className="p-5 rounded-2xl mb-4" style={{ backgroundColor: `${scoreColor(result.score)}10` }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-bold" style={{ color: scoreColor(result.score) }}>{scoreLabel(result.score)}</span>
+                    <span className="text-3xl font-heading font-bold" style={{ color: scoreColor(result.score) }}>{result.score}%</span>
+                  </div>
+                  <div className="h-3 bg-white rounded-full overflow-hidden mb-3">
+                    <motion.div initial={{ width: 0 }} animate={{ width: `${result.score}%` }}
+                      transition={{ duration: 0.8 }}
+                      className="h-full rounded-full" style={{ backgroundColor: scoreColor(result.score) }} />
+                  </div>
+                  {transcript && (
+                    <div className="mt-3">
+                      <p className="text-xs font-bold text-text-tertiary uppercase tracking-wider mb-1">You said:</p>
+                      <p className="text-sm text-text-secondary italic">"{transcript}"</p>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              {/* Navigation */}
+              <div className="flex items-center justify-between">
+                <button onClick={handlePrev} disabled={currentIndex === 0}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center ${currentIndex === 0 ? 'bg-surface text-text-tertiary cursor-not-allowed' : 'bg-surface text-text-secondary hover:bg-elevated'}`}>
+                  <ChevronLeft size={18} />
+                </button>
+                <button onClick={handleNext} disabled={currentIndex === items.length - 1}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center ${currentIndex === items.length - 1 ? 'bg-surface text-text-tertiary cursor-not-allowed' : 'bg-surface text-text-secondary hover:bg-elevated'}`}>
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Stats Sidebar - 2/5 */}
+          <div className="lg:col-span-2 mt-6 lg:mt-0 px-5 lg:px-0 pb-8 lg:pb-0 space-y-4">
+            {/* Session Stats */}
+            <div className="bg-surface lg:bg-white lg:border lg:border-border/30 lg:shadow-sm rounded-2xl p-5">
+              <h3 className="font-heading font-bold mb-4">Session Stats</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="text-center p-3 bg-white lg:bg-surface rounded-xl">
+                  <p className="text-2xl font-heading font-bold text-primary">{practiced}</p>
+                  <p className="text-[10px] text-text-tertiary font-medium">Practiced</p>
+                </div>
+                <div className="text-center p-3 bg-white lg:bg-surface rounded-xl">
+                  <p className="text-2xl font-heading font-bold text-teal">
+                    {attempts > 0 ? Math.round(totalScore / attempts) : 0}%
+                  </p>
+                  <p className="text-[10px] text-text-tertiary font-medium">Avg Score</p>
+                </div>
+              </div>
+              {sessionLogged && (
+                <div className="flex items-center gap-2 mt-3 p-3 bg-gold/10 rounded-xl">
+                  <Award size={16} className="text-gold" />
+                  <span className="text-xs font-bold text-gold">+{XP_AMOUNTS.PRONUNCIATION} XP earned!</span>
+                </div>
+              )}
+            </div>
+
+            {/* Tips */}
+            <div className="bg-surface lg:bg-white lg:border lg:border-border/30 lg:shadow-sm rounded-2xl p-5">
+              <h3 className="font-heading font-bold mb-3">Tips</h3>
+              <ul className="space-y-2.5 text-sm text-text-secondary">
+                <li className="flex gap-2"><span className="text-teal">•</span>Listen first, then try to repeat</li>
+                <li className="flex gap-2"><span className="text-teal">•</span>Speak clearly and at a natural pace</li>
+                <li className="flex gap-2"><span className="text-teal">•</span>Reduce background noise for accuracy</li>
+                <li className="flex gap-2"><span className="text-teal">•</span>Practice each word at least 3 times</li>
+              </ul>
+            </div>
+
+            {/* Word List */}
+            <div className="bg-surface lg:bg-white lg:border lg:border-border/30 lg:shadow-sm rounded-2xl p-5">
+              <h3 className="font-heading font-bold mb-3">All {mode === 'words' ? 'Words' : 'Sentences'}</h3>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {items.map((item, i) => (
+                  <button key={i} onClick={() => { setCurrentIndex(i); setResult(null); setTranscript(''); }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                      i === currentIndex ? 'bg-primary/10 text-primary font-semibold' : 'text-text-secondary hover:bg-surface'
+                    }`}>
+                    {mode === 'words' ? item.word : item.text.substring(0, 30) + '...'}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

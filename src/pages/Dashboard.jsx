@@ -1,19 +1,11 @@
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Bell, Flame, MessageSquare, Mic, PenLine, HelpCircle, ChevronRight, BookOpen, Headphones, FileText, TrendingUp, Target } from 'lucide-react';
+import { Flame, MessageSquare, Mic, PenLine, HelpCircle, ChevronRight, BookOpen, TrendingUp, Target, Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
-
-const stats = [
-  { label: 'Level', value: 'B1', subtitle: 'Intermediate', icon: TrendingUp, color: '#8B5CF6', bgClass: 'gradient-primary' },
-  { label: 'XP Points', value: '2,450', subtitle: '+120 this week', icon: Target, color: '#14B8A6', bgClass: 'bg-white lg:bg-white' },
-  { label: 'Accuracy', value: '85%', subtitle: 'Last 7 days', icon: Target, color: '#F59E0B', bgClass: 'bg-white lg:bg-white' },
-];
-
-const lessons = [
-  { title: 'Present Perfect Tense', subtitle: 'Grammar · Lesson 4 of 8', icon: BookOpen, color: '#8B5CF6', progress: 60 },
-  { title: 'Listening Practice', subtitle: 'Comprehension · Daily Challenge', icon: Headphones, color: '#14B8A6', progress: 0 },
-  { title: 'Essay Writing', subtitle: 'Writing · New Assignment', icon: FileText, color: '#F59E0B', progress: 0 },
-];
+import { getUserData, getLessonProgress, getDailyActivity, getLevelFromXP } from '../services/firestore';
+import { CURRICULUM } from '../data/curriculum';
+import { getDailyInsight, INSIGHT_ICONS, INSIGHT_COLORS } from '../data/insights';
 
 const quickActions = [
   { label: 'AI Chat', desc: 'Practice conversations', icon: MessageSquare, color: '#8B5CF6', to: '/chat' },
@@ -24,7 +16,65 @@ const quickActions = [
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const displayName = user?.displayName || 'Learner';
+  const [userData, setUserData] = useState(null);
+  const [lessonProgress, setLessonProgress] = useState({});
+  const [dailyActivity, setDailyActivity] = useState({ count: 0 });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      try {
+        const [ud, lp, da] = await Promise.all([
+          getUserData(user.uid),
+          getLessonProgress(user.uid),
+          getDailyActivity(user.uid),
+        ]);
+        setUserData(ud);
+        setLessonProgress(lp);
+        setDailyActivity(da);
+      } catch (err) {
+        console.error('Dashboard load error:', err);
+      }
+      setLoading(false);
+    };
+    load();
+  }, [user]);
+
+  const displayName = userData?.displayName || user?.displayName || 'Learner';
+  const xp = userData?.xp || 0;
+  const streak = userData?.streak || 0;
+  const levelInfo = getLevelFromXP(xp);
+  const lessonsCompleted = userData?.lessonsCompleted || 0;
+  const dailyGoal = userData?.dailyGoal || 5;
+  const insight = getDailyInsight(user?.uid);
+
+  // Get next lessons to continue
+  const nextLessons = CURRICULUM.filter(l => {
+    const prog = lessonProgress[l.id];
+    return !prog?.completed;
+  }).slice(0, 3);
+
+  // Greeting based on time
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';
+
+  const goalItems = ['Lesson', 'Practice', 'Quiz', 'Chat', 'Writing'];
+  const completedGoals = [dailyActivity.lesson, dailyActivity.practice, dailyActivity.quiz, dailyActivity.chat, dailyActivity.writing];
+
+  const stats = [
+    { label: 'Level', value: levelInfo.level, subtitle: levelInfo.name, icon: TrendingUp, color: '#8B5CF6', gradient: true },
+    { label: 'XP Points', value: xp.toLocaleString(), subtitle: `${levelInfo.progressToNext}% to ${levelInfo.nextLevel}`, icon: Target, color: '#14B8A6' },
+    { label: 'Lessons', value: lessonsCompleted, subtitle: `of ${CURRICULUM.length} total`, icon: BookOpen, color: '#F59E0B' },
+  ];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
 
   return (
     <div className="lg:p-6 xl:p-8">
@@ -32,18 +82,14 @@ export default function Dashboard() {
         {/* Header */}
         <div className="flex items-start justify-between px-5 pt-6 pb-4 lg:px-0 lg:pt-0 lg:pb-6">
           <div>
-            <p className="text-sm text-text-secondary">Good Morning 👋</p>
+            <p className="text-sm text-text-secondary">{greeting} 👋</p>
             <h1 className="font-heading text-2xl lg:text-3xl font-bold mt-1">{displayName}</h1>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 bg-orange/10 px-3 py-1.5 rounded-full">
               <Flame size={16} className="text-orange" />
-              <span className="text-sm font-bold text-orange">12</span>
+              <span className="text-sm font-bold text-orange">{streak}</span>
             </div>
-            <button className="w-10 h-10 rounded-full bg-surface lg:bg-white lg:shadow-sm flex items-center justify-center relative lg:hidden">
-              <Bell size={20} className="text-text-secondary" />
-              <div className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-error rounded-full border-2 border-white" />
-            </button>
           </div>
         </div>
 
@@ -56,14 +102,15 @@ export default function Dashboard() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className={`rounded-2xl p-4 lg:p-5 ${i === 0 ? 'gradient-primary text-white' : 'bg-surface lg:bg-white lg:shadow-sm lg:border lg:border-border/30'}`}
+                className={`rounded-2xl p-4 lg:p-5 ${s.gradient ? 'gradient-primary text-white' : 'bg-surface lg:bg-white lg:shadow-sm lg:border lg:border-border/30'}`}
               >
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-2 ${i === 0 ? 'bg-white/20' : ''}`} style={i > 0 ? { backgroundColor: `${s.color}15` } : {}}>
-                  <s.icon size={17} style={i > 0 ? { color: s.color } : {}} className={i === 0 ? 'text-white' : ''} />
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-2 ${s.gradient ? 'bg-white/20' : ''}`}
+                  style={!s.gradient ? { backgroundColor: `${s.color}15` } : {}}>
+                  <s.icon size={17} style={!s.gradient ? { color: s.color } : {}} className={s.gradient ? 'text-white' : ''} />
                 </div>
                 <p className="text-2xl lg:text-3xl font-heading font-bold">{s.value}</p>
-                <p className={`text-xs mt-0.5 ${i === 0 ? 'text-white/70' : 'text-text-secondary'}`}>{s.label}</p>
-                <p className={`text-[10px] mt-1 hidden lg:block ${i === 0 ? 'text-white/50' : 'text-text-tertiary'}`}>{s.subtitle}</p>
+                <p className={`text-xs mt-0.5 ${s.gradient ? 'text-white/70' : 'text-text-secondary'}`}>{s.label}</p>
+                <p className={`text-[10px] mt-1 hidden lg:block ${s.gradient ? 'text-white/50' : 'text-text-tertiary'}`}>{s.subtitle}</p>
               </motion.div>
             ))}
           </div>
@@ -78,21 +125,21 @@ export default function Dashboard() {
               <div className="lg:bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-border/30 lg:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-heading font-bold text-base lg:text-lg">Daily Goal</h3>
-                  <span className="text-sm text-teal font-semibold">3 of 5 completed</span>
+                  <span className="text-sm text-teal font-semibold">{dailyActivity.count} of {goalItems.length} completed</span>
                 </div>
                 <div className="w-full h-3 bg-surface lg:bg-surface rounded-full overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
-                    animate={{ width: '60%' }}
+                    animate={{ width: `${(dailyActivity.count / goalItems.length) * 100}%` }}
                     transition={{ duration: 1, ease: 'easeOut' }}
                     className="h-full gradient-hero rounded-full"
                   />
                 </div>
                 <div className="flex justify-between mt-4">
-                  {['Lesson', 'Practice', 'Quiz', 'Chat', 'Review'].map((item, i) => (
+                  {goalItems.map((item, i) => (
                     <div key={item} className="flex flex-col items-center gap-1.5">
-                      <div className={`w-9 h-9 lg:w-10 lg:h-10 rounded-full flex items-center justify-center ${i < 3 ? 'gradient-hero' : 'bg-surface'}`}>
-                        <span className={`text-xs ${i < 3 ? 'text-white' : 'text-text-tertiary'}`}>✓</span>
+                      <div className={`w-9 h-9 lg:w-10 lg:h-10 rounded-full flex items-center justify-center ${completedGoals[i] ? 'gradient-hero' : 'bg-surface'}`}>
+                        <span className={`text-xs ${completedGoals[i] ? 'text-white' : 'text-text-tertiary'}`}>✓</span>
                       </div>
                       <span className="text-[10px] lg:text-[11px] font-medium text-text-secondary">{item}</span>
                     </div>
@@ -100,6 +147,27 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+
+            {/* Daily Insight */}
+            {insight && (
+              <div className="px-5 lg:px-0">
+                <div className="lg:bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-border/30 lg:p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Sparkles size={16} className="text-primary" />
+                    <h3 className="font-heading font-bold text-base lg:text-lg">Daily Insight</h3>
+                  </div>
+                  <div className="p-4 rounded-2xl" style={{ backgroundColor: `${INSIGHT_COLORS[insight.type]}10` }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">{INSIGHT_ICONS[insight.type]}</span>
+                      <span className="text-xs font-bold uppercase tracking-wider" style={{ color: INSIGHT_COLORS[insight.type] }}>{insight.type}</span>
+                    </div>
+                    <h4 className="font-heading font-bold text-[15px] text-text-primary mb-1">{insight.title}</h4>
+                    <p className="text-sm text-text-secondary leading-relaxed">{insight.body}</p>
+                    {insight.example && <p className="text-sm text-text-secondary mt-2 italic">{insight.example}</p>}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Continue Learning */}
             <div className="px-5 lg:px-0">
@@ -109,26 +177,35 @@ export default function Dashboard() {
                   <Link to="/lessons" className="text-sm font-semibold text-teal hover:text-teal/80 transition-colors">See All</Link>
                 </div>
                 <div className="space-y-3">
-                  {lessons.map((lesson) => (
-                    <Link key={lesson.title} to="/lessons/1" className="flex items-center gap-4 p-4 bg-surface lg:bg-surface/60 rounded-2xl hover:bg-elevated transition-colors group">
-                      <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${lesson.color}15` }}>
-                        <lesson.icon size={22} style={{ color: lesson.color }} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-heading font-semibold text-[15px] text-text-primary">{lesson.title}</h4>
-                        <p className="text-xs text-text-secondary mt-0.5">{lesson.subtitle}</p>
-                        {lesson.progress > 0 && (
-                          <div className="flex items-center gap-2 mt-2">
-                            <div className="flex-1 h-1.5 bg-white rounded-full overflow-hidden max-w-32">
-                              <div className="h-full rounded-full" style={{ width: `${lesson.progress}%`, backgroundColor: lesson.color }} />
+                  {nextLessons.map((lesson) => {
+                    const prog = lessonProgress[lesson.id];
+                    const progress = prog ? (prog.completed ? 100 : 50) : 0;
+                    return (
+                      <Link key={lesson.id} to={`/lessons/${lesson.id}`} className="flex items-center gap-4 p-4 bg-surface lg:bg-surface/60 rounded-2xl hover:bg-elevated transition-colors group">
+                        <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl flex-shrink-0" style={{ backgroundColor: `${lesson.color}15` }}>
+                          {lesson.icon}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-heading font-semibold text-[15px] text-text-primary">{lesson.title}</h4>
+                          <p className="text-xs text-text-secondary mt-0.5">{lesson.category} · {lesson.duration}</p>
+                          {progress > 0 && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <div className="flex-1 h-1.5 bg-white rounded-full overflow-hidden max-w-32">
+                                <div className="h-full rounded-full" style={{ width: `${progress}%`, backgroundColor: lesson.color }} />
+                              </div>
+                              <span className="text-[10px] font-bold" style={{ color: lesson.color }}>{progress}%</span>
                             </div>
-                            <span className="text-[10px] font-bold" style={{ color: lesson.color }}>{lesson.progress}%</span>
-                          </div>
-                        )}
-                      </div>
-                      <ChevronRight size={18} className="text-text-tertiary group-hover:text-text-secondary transition-colors flex-shrink-0" />
-                    </Link>
-                  ))}
+                          )}
+                        </div>
+                        <ChevronRight size={18} className="text-text-tertiary group-hover:text-text-secondary transition-colors flex-shrink-0" />
+                      </Link>
+                    );
+                  })}
+                  {nextLessons.length === 0 && (
+                    <div className="text-center py-6">
+                      <p className="text-sm text-text-secondary">🎉 All lessons completed!</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -154,22 +231,35 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Recent Badges */}
+            {/* Level Progress */}
+            <div className="px-5 lg:px-0">
+              <div className="lg:bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-border/30 lg:p-6">
+                <h3 className="font-heading font-bold text-base lg:text-lg mb-4">Level Progress</h3>
+                <div className="text-center py-4 bg-gradient-to-br from-primary/5 to-teal/5 rounded-2xl">
+                  <p className="text-4xl font-heading font-bold text-primary">{levelInfo.level}</p>
+                  <p className="text-sm text-text-secondary mt-1">{levelInfo.name}</p>
+                  <div className="mt-4 mx-6">
+                    <div className="h-2 bg-white rounded-full overflow-hidden">
+                      <div className="h-full gradient-primary rounded-full" style={{ width: `${levelInfo.progressToNext}%` }} />
+                    </div>
+                    <p className="text-[11px] text-text-tertiary mt-1.5">{levelInfo.progressToNext}% to {levelInfo.nextLevel}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Streak */}
             <div className="px-5 pb-6 lg:px-0 lg:pb-0">
               <div className="lg:bg-white lg:rounded-2xl lg:shadow-sm lg:border lg:border-border/30 lg:p-6">
-                <h3 className="font-heading font-bold text-base lg:text-lg mb-4">Recent Badges</h3>
-                <div className="flex lg:grid lg:grid-cols-2 gap-3">
-                  {[
-                    { emoji: '🏆', label: 'Champion' },
-                    { emoji: '🔥', label: 'On Fire' },
-                    { emoji: '💬', label: 'Chatter' },
-                    { emoji: '📚', label: 'Scholar' },
-                  ].map((badge, i) => (
-                    <div key={i} className="flex-1 lg:flex lg:items-center lg:gap-3 text-center lg:text-left p-3 bg-surface lg:bg-surface/60 rounded-2xl">
-                      <span className="text-2xl lg:text-xl block lg:inline">{badge.emoji}</span>
-                      <span className="text-[10px] lg:text-xs font-semibold text-text-secondary mt-1 lg:mt-0 block">{badge.label}</span>
-                    </div>
-                  ))}
+                <h3 className="font-heading font-bold text-base lg:text-lg mb-4">Current Streak</h3>
+                <div className="flex items-center gap-4 p-4 bg-orange/5 rounded-2xl">
+                  <div className="w-14 h-14 rounded-2xl bg-orange/10 flex items-center justify-center">
+                    <Flame size={28} className="text-orange" />
+                  </div>
+                  <div>
+                    <p className="text-3xl font-heading font-bold text-orange">{streak}</p>
+                    <p className="text-xs text-text-secondary">day{streak !== 1 ? 's' : ''} in a row</p>
+                  </div>
                 </div>
               </div>
             </div>
